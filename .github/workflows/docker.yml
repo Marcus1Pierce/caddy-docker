@@ -16,6 +16,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Read Caddy version from stackbrew-config.yaml
         id: version
+        # yq is preinstalled on ubuntu-latest runners
         run: |
           echo "caddy_version=v$(yq -r '.versions[0].caddy_version' stackbrew-config.yaml)" >> "$GITHUB_OUTPUT"
           echo "dist_commit=$(yq -r '.versions[0].dist_commit' stackbrew-config.yaml)" >> "$GITHUB_OUTPUT"
