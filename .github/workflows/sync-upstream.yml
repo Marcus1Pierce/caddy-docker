@@ -1,0 +1,58 @@
+name: Sync upstream
+
+on:
+  schedule:
+    # daily at 03:17 UTC (off the :00 mark to avoid the scheduler rush)
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Merge upstream (fork wins on conflict)
+        id: merge
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git remote add upstream https://github.com/caddyserver/caddy-docker.git \
+            2>/dev/null || git remote set-url upstream https://github.com/caddyserver/caddy-docker.git
+          git fetch --no-tags upstream master:refs/remotes/upstream/master
+
+          if git merge-base --is-ancestor upstream/master HEAD; then
+            echo "Already up to date with upstream."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          before=$(git rev-parse 'HEAD^{tree}')
+          # -X ours: conflicting hunks (our docker.yml) keep our version;
+          # non-conflicting upstream changes (Dockerfiles, stackbrew-config.yaml)
+          # are merged in normally.
+          git merge -X ours --no-edit upstream/master
+          git push origin HEAD:master
+
+          if [ "$before" = "$(git rev-parse 'HEAD^{tree}')" ]; then
+            # only files we deliberately keep (docker.yml) differed -> image unchanged
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Rebuild image if source changed
+        # A push made with GITHUB_TOKEN does not trigger other workflows, and the
+        # built-in "Sync fork" API can't resolve conflicts, so we drive the build
+        # explicitly here. workflow_dispatch always creates a run.
+        if: steps.merge.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run docker.yml --ref master --repo "${{ github.repository }}"
